@@ -1,0 +1,17 @@
+# Compiled binary
+hinge-daemon
+
+# Cache (pre-processed sounds)
+cache/
+
+# Old scripts (replaced by Swift daemon)
+scripts/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/
