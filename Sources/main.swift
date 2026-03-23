@@ -385,6 +385,114 @@ class HingeDaemon {
     }
 }
 
+// MARK: - Auto-Update
+
+class UpdateChecker {
+    private let repo = "the-codingninja/mac-lid-sound"
+    private(set) var latestVersion: String?
+    private var downloadURL: String?
+    var onUpdateAvailable: ((String) -> Void)?
+
+    func check() {
+        let urlString = "https://api.github.com/repos/\(repo)/releases/latest"
+        guard let url = URL(string: urlString) else { return }
+
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let tagName = json["tag_name"] as? String,
+                  let assets = json["assets"] as? [[String: Any]] else {
+                if let error = error { log("Update check failed: \(error.localizedDescription)") }
+                return
+            }
+
+            let remote = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+            let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+
+            guard self?.isNewer(remote, than: current) == true else {
+                log("Up to date (v\(current))")
+                return
+            }
+
+            let dmgURL = assets.first { ($0["name"] as? String)?.hasSuffix(".dmg") == true }
+            let url = dmgURL?["browser_download_url"] as? String
+
+            DispatchQueue.main.async {
+                self?.latestVersion = remote
+                self?.downloadURL = url
+                self?.onUpdateAvailable?(remote)
+                log("Update available: v\(remote)")
+            }
+        }.resume()
+    }
+
+    private func isNewer(_ remote: String, than current: String) -> Bool {
+        let r = remote.split(separator: ".").compactMap { Int($0) }
+        let c = current.split(separator: ".").compactMap { Int($0) }
+        for i in 0..<max(r.count, c.count) {
+            let rv = i < r.count ? r[i] : 0
+            let cv = i < c.count ? c[i] : 0
+            if rv > cv { return true }
+            if rv < cv { return false }
+        }
+        return false
+    }
+
+    func performUpdate(onStatus: @escaping (String) -> Void) {
+        guard let urlString = downloadURL, let url = URL(string: urlString) else { return }
+
+        onStatus("Downloading v\(latestVersion ?? "")...")
+        log("Downloading update from \(urlString)")
+
+        URLSession.shared.downloadTask(with: url) { localURL, _, error in
+            guard let localURL = localURL else {
+                log("Update download failed: \(error?.localizedDescription ?? "unknown")")
+                DispatchQueue.main.async { onStatus("Download failed") }
+                return
+            }
+
+            // Copy to stable location before temp file is cleaned up
+            let dmgPath = "/tmp/Door-Hinge-update.dmg"
+            try? FileManager.default.removeItem(atPath: dmgPath)
+            try? FileManager.default.copyItem(atPath: localURL.path, toPath: dmgPath)
+
+            DispatchQueue.main.async {
+                self.installUpdate(dmgPath: dmgPath, onStatus: onStatus)
+            }
+        }.resume()
+    }
+
+    private func installUpdate(dmgPath: String, onStatus: (String) -> Void) {
+        onStatus("Installing...")
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let appPath = Bundle.main.bundlePath
+
+        // Write updater script that runs after this process exits
+        let script = """
+        #!/bin/bash
+        while kill -0 \(pid) 2>/dev/null; do sleep 0.3; done
+        hdiutil attach "\(dmgPath)" -quiet -nobrowse -mountpoint /tmp/dh-update-mount
+        rm -rf "\(appPath)"
+        cp -R "/tmp/dh-update-mount/Door Hinge.app" "\(appPath)"
+        xattr -cr "\(appPath)"
+        hdiutil detach /tmp/dh-update-mount -quiet
+        rm -f "\(dmgPath)" /tmp/door-hinge-updater.sh
+        open "\(appPath)"
+        """
+
+        let scriptPath = "/tmp/door-hinge-updater.sh"
+        try? script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptPath]
+        try? process.run()
+
+        log("Update script launched, terminating for update...")
+        NSApp.terminate(nil)
+    }
+}
+
 // MARK: - Menu Bar App
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -392,15 +500,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var daemon: HingeDaemon?
     var muteItem: NSMenuItem!
     var angleItem: NSMenuItem!
+    var updateItem: NSMenuItem!
     var launchAtLoginItem: NSMenuItem!
     var soundPackMenu: NSMenu!
     var baseSoundsDir: String = ""
     var currentPack: String = "hinge"
+    let updateChecker = UpdateChecker()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         currentPack = UserDefaults.standard.string(forKey: "soundPack") ?? "hinge"
         setupMenuBar()
         startDaemon()
+
+        // Check for updates on launch and every 24 hours
+        updateChecker.onUpdateAvailable = { [weak self] version in
+            self?.updateItem.title = "Update to v\(version)"
+            self?.updateItem.isHidden = false
+        }
+        updateChecker.check()
+        Timer.scheduledTimer(withTimeInterval: 86400, repeats: true) { [weak self] _ in
+            self?.updateChecker.check()
+        }
     }
 
     // MARK: Menu Bar Setup
@@ -441,6 +561,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         }
         menu.addItem(launchAtLoginItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        updateItem = NSMenuItem(title: "Check for Updates...", action: #selector(checkForUpdate), keyEquivalent: "")
+        updateItem.target = self
+        menu.addItem(updateItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -611,6 +737,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             } catch {
                 log("Failed to toggle launch at login: \(error)")
+            }
+        }
+    }
+
+    @objc private func checkForUpdate() {
+        if updateChecker.latestVersion != nil {
+            // Update available — install it
+            updateChecker.performUpdate { [weak self] status in
+                self?.updateItem.title = status
+            }
+        } else {
+            // No update known yet — trigger a check
+            updateItem.title = "Checking..."
+            updateChecker.onUpdateAvailable = { [weak self] version in
+                self?.updateItem.title = "Update to v\(version)"
+            }
+            updateChecker.check()
+            // Reset title after timeout if no update found
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                if self?.updateChecker.latestVersion == nil {
+                    self?.updateItem.title = "Up to date"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                        if self?.updateChecker.latestVersion == nil {
+                            self?.updateItem.title = "Check for Updates..."
+                        }
+                    }
+                }
             }
         }
     }

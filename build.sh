@@ -38,8 +38,12 @@ swiftc "$SCRIPT_DIR/Sources/main.swift" \
     -framework ServiceManagement \
     -O
 
-# Copy resources
+# Copy resources and inject version from git tag
 cp "$SCRIPT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.0")
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_BUNDLE/Contents/Info.plist"
+echo "Version: $VERSION"
 cp "$SCRIPT_DIR/sounds/hinge/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/hinge/"
 cp "$SCRIPT_DIR/sounds/garage/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/garage/"
 
