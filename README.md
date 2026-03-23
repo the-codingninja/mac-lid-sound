@@ -26,22 +26,26 @@ Lid moves → sensor reports angle → daemon detects velocity/direction
 
 ## Install
 
-### App (recommended)
+Run this in Terminal:
 
-1. Download **`Door-Hinge.dmg`** from [Releases](https://github.com/the-codingninja/mac-lid-sound/releases)
-2. Open the DMG and either:
-   - **Double-click "Install Door Hinge"** — installs to /Applications and launches automatically
-   - Or drag **Door Hinge** to the **Applications** folder manually
+```bash
+curl -sL https://raw.githubusercontent.com/the-codingninja/mac-lid-sound/main/install-app.sh | bash
+```
 
-> **Gatekeeper warning:** Since the app isn't notarized with Apple, macOS may block it on first launch. Fix with one of:
-> - **Right-click** the app > **Open** > click **Open** in the dialog
-> - Or run in Terminal: `xattr -cr /Applications/Door\ Hinge.app`
+This downloads the latest release, installs to /Applications, and launches it. No Gatekeeper issues.
 
 The app lives in your **menu bar** — no dock icon. From the menu you can:
 - See the live lid angle
 - Switch between **Door Hinge** and **Garage Door** sounds
 - Mute/unmute
 - Enable Launch at Login
+
+### Manual install
+
+1. Download **`Door-Hinge.dmg`** from [Releases](https://github.com/the-codingninja/mac-lid-sound/releases)
+2. Open the DMG, drag **Door Hinge** to **Applications**
+3. Clear Gatekeeper: `xattr -cr /Applications/Door\ Hinge.app`
+4. Open from Applications
 
 ### From source
 
@@ -51,14 +55,6 @@ cd mac-lid-sound
 ./build.sh
 open "build/Door Hinge.app"
 ```
-
-### CLI daemon (alternative)
-
-```bash
-./install.sh
-```
-
-This compiles a headless daemon and installs a LaunchAgent that starts at login.
 
 ## Uninstall
 
