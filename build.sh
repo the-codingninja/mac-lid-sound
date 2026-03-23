@@ -57,6 +57,7 @@ rm -rf "$DMG_STAGING"
 mkdir -p "$DMG_STAGING"
 cp -R "$APP_BUNDLE" "$DMG_STAGING/"
 ln -s /Applications "$DMG_STAGING/Applications"
+cp "$SCRIPT_DIR/Install Door Hinge.command" "$DMG_STAGING/"
 
 rm -f "$SCRIPT_DIR/$DMG_NAME"
 hdiutil create \

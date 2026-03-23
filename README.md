@@ -26,54 +26,47 @@ Lid moves → sensor reports angle → daemon detects velocity/direction
 
 ## Install
 
-**From source:**
+### App (recommended)
+
+1. Download **`Door-Hinge.dmg`** from [Releases](https://github.com/the-codingninja/mac-lid-sound/releases)
+2. Open the DMG and either:
+   - **Double-click "Install Door Hinge"** — installs to /Applications and launches automatically
+   - Or drag **Door Hinge** to the **Applications** folder manually
+
+> **Gatekeeper warning:** Since the app isn't notarized with Apple, macOS may block it on first launch. Fix with one of:
+> - **Right-click** the app > **Open** > click **Open** in the dialog
+> - Or run in Terminal: `xattr -cr /Applications/Door\ Hinge.app`
+
+The app lives in your **menu bar** — no dock icon. From the menu you can:
+- See the live lid angle
+- Switch between **Door Hinge** and **Garage Door** sounds
+- Mute/unmute
+- Enable Launch at Login
+
+### From source
 
 ```bash
-git clone https://github.com/user/mac-door-hinge-sound.git
-cd mac-door-hinge-sound
+git clone https://github.com/the-codingninja/mac-lid-sound.git
+cd mac-lid-sound
+./build.sh
+open "build/Door Hinge.app"
+```
+
+### CLI daemon (alternative)
+
+```bash
 ./install.sh
 ```
 
-This compiles the Swift daemon and installs a LaunchAgent that starts at login.
-
-**Pre-built binary:**
-
-Download `hinge-daemon` from [Releases](https://github.com/user/mac-door-hinge-sound/releases), then:
-
-```bash
-# Place it somewhere permanent
-mkdir -p ~/.local/bin
-cp hinge-daemon ~/.local/bin/
-cp -r sounds ~/.local/share/hinge-sounds/
-
-# Run it
-~/.local/bin/hinge-daemon ~/.local/share/hinge-sounds/
-```
-
-Or use `install.sh` which handles everything.
+This compiles a headless daemon and installs a LaunchAgent that starts at login.
 
 ## Uninstall
 
+**App:** Quit from menu bar, drag from /Applications to Trash.
+
+**CLI daemon:**
 ```bash
 ./uninstall.sh
-```
-
-## Usage
-
-```bash
-touch ~/.hinge_mute      # mute
-rm ~/.hinge_mute          # unmute
-cat ~/.hinge_sound.log    # view log
-```
-
-**Manual control:**
-
-```bash
-# Stop
-launchctl unload ~/Library/LaunchAgents/com.hinge-sound.daemon.plist
-
-# Start
-launchctl load ~/Library/LaunchAgents/com.hinge-sound.daemon.plist
 ```
 
 ## How the sensor works
@@ -94,7 +87,8 @@ hidutil list --matching '{"VendorID":0x5ac,"ProductID":0x8104,"PrimaryUsagePage"
 
 ## Sound credits
 
-Door creak sounds from [BigSoundBank.com](https://bigsoundbank.com) — CC0 (public domain).
+- Door creak sounds from [BigSoundBank.com](https://bigsoundbank.com) — CC0 (public domain)
+- Garage door sounds from [SoundEffectsPlus.com](https://www.soundeffectsplus.com) — royalty-free
 
 ## License
 
