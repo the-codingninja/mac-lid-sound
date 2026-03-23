@@ -53,14 +53,18 @@ class CreakPlayer {
     private var closeBuffers: [AVAudioPCMBuffer] = []
     private var openBuffers: [AVAudioPCMBuffer] = []
     private var isPlaying = false
+    private var baseSoundsDir: String
 
-    init?(soundsDir: String) {
-        // Load sound files
-        closeBuffers = loadBuffers(dir: soundsDir, prefix: "close_")
-        openBuffers = loadBuffers(dir: soundsDir, prefix: "open_")
+    init?(soundsDir: String, pack: String = "hinge") {
+        baseSoundsDir = soundsDir
+
+        // Load from pack subdirectory
+        let packDir = (soundsDir as NSString).appendingPathComponent(pack)
+        closeBuffers = CreakPlayer.loadBuffers(dir: packDir, prefix: "close_")
+        openBuffers = CreakPlayer.loadBuffers(dir: packDir, prefix: "open_")
 
         guard !closeBuffers.isEmpty, !openBuffers.isEmpty else {
-            log("ERROR: No sound files found in \(soundsDir)")
+            log("ERROR: No sound files found in \(packDir)")
             return nil
         }
 
@@ -79,7 +83,52 @@ class CreakPlayer {
         }
     }
 
-    private func loadBuffers(dir: String, prefix: String) -> [AVAudioPCMBuffer] {
+    func loadSoundPack(name: String) -> Bool {
+        let packDir = (baseSoundsDir as NSString).appendingPathComponent(name)
+        let newClose = CreakPlayer.loadBuffers(dir: packDir, prefix: "close_")
+        let newOpen = CreakPlayer.loadBuffers(dir: packDir, prefix: "open_")
+        guard !newClose.isEmpty, !newOpen.isEmpty else {
+            log("ERROR: Could not load sound pack '\(name)'")
+            return false
+        }
+
+        playerNode.stop()
+        isPlaying = false
+
+        // Reconnect if audio format changed
+        let newFormat = newClose[0].format
+        if closeBuffers.isEmpty || newFormat != closeBuffers[0].format {
+            engine.disconnectNodeOutput(playerNode)
+            engine.disconnectNodeOutput(timePitch)
+            engine.connect(playerNode, to: timePitch, format: newFormat)
+            engine.connect(timePitch, to: engine.mainMixerNode, format: newFormat)
+        }
+
+        closeBuffers = newClose
+        openBuffers = newOpen
+        log("Switched to sound pack: \(name)")
+        return true
+    }
+
+    static func availablePacks(in dir: String) -> [String] {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(atPath: dir) else { return [] }
+        return entries.filter { entry in
+            var isDir: ObjCBool = false
+            let path = (dir as NSString).appendingPathComponent(entry)
+            return fm.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
+        }.sorted()
+    }
+
+    static func displayName(for pack: String) -> String {
+        switch pack {
+        case "hinge": return "Door Hinge"
+        case "garage": return "Garage Door"
+        default: return pack.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private static func loadBuffers(dir: String, prefix: String) -> [AVAudioPCMBuffer] {
         var buffers: [AVAudioPCMBuffer] = []
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(atPath: dir) else { return buffers }
@@ -124,14 +173,8 @@ class CreakPlayer {
         let buffers = direction == .closing ? closeBuffers : openBuffers
         let buffer = buffers[Int.random(in: 0..<buffers.count)]
 
-        // Map velocity to playback rate:
-        //   slow movement (8°/s)  -> 0.7x (slow, drawn-out creak)
-        //   medium (30°/s)        -> 1.0x (normal)
-        //   fast (80°/s)          -> 1.8x (quick, snappy creak)
         let rate = max(0.5, min(1.8, Float(velocity) / 35.0 + 0.3))
         timePitch.rate = rate
-
-        // Random pitch variation: +/- 300 cents (3 semitones) for organic feel
         timePitch.pitch = Float.random(in: -300...300)
 
         if isPlaying {
@@ -149,7 +192,6 @@ class CreakPlayer {
 
     func fadeOut(duration: TimeInterval = 0.3) {
         guard isPlaying else { return }
-        // Ramp volume down then stop
         let steps = 10
         let interval = duration / Double(steps)
         for i in 1...steps {
@@ -218,14 +260,14 @@ class HingeDaemon {
 
     // State
     var lastAngle: Int = -1
-    var restAngle: Int = -1                       // angle when lid was last at rest
+    var restAngle: Int = -1
     var angleHistory: [(time: Date, angle: Int)] = []
     var lastCreakTime: Date = .distantPast
-    var lastMovementTime: Date = .distantPast     // when we last saw real movement
+    var lastMovementTime: Date = .distantPast
     var movementStartAngle: Int = -1
     var isMoving = false
-    var stableCount: Int = 0                      // consecutive polls with no significant change
-    var fadeOutScheduled = false                   // whether we've scheduled a fade-out
+    var stableCount: Int = 0
+    var fadeOutScheduled = false
     private var timer: DispatchSourceTimer?
 
     // Observable state for menu bar
@@ -233,13 +275,13 @@ class HingeDaemon {
     var onAngleUpdate: ((Int) -> Void)?
 
     // Tuning
-    let pollInterval: TimeInterval = 1.0 / 30.0  // 30 Hz
-    let velocityThreshold: Double = 8.0           // deg/s to trigger sound
-    let stopThreshold: Double = 3.0               // deg/s to stop sound
-    let minCreakInterval: TimeInterval = 0.15     // min time between creak triggers
-    let historyWindow: TimeInterval = 0.3         // seconds of angle history for velocity calc
-    let deadZone: Int = 3                         // minimum deg change from rest to trigger
-    let stableFrames: Int = 10                    // polls with <deadZone change = at rest
+    let pollInterval: TimeInterval = 1.0 / 30.0
+    let velocityThreshold: Double = 8.0
+    let stopThreshold: Double = 3.0
+    let minCreakInterval: TimeInterval = 0.15
+    let historyWindow: TimeInterval = 0.3
+    let deadZone: Int = 3
+    let stableFrames: Int = 10
 
     init(sensor: LidAngleSensor, player: CreakPlayer) {
         self.sensor = sensor
@@ -249,7 +291,6 @@ class HingeDaemon {
     func start() {
         log("Daemon started, polling at \(Int(1.0/pollInterval)) Hz")
 
-        // Initial reading
         if let angle = sensor.readAngle() {
             lastAngle = angle
             restAngle = angle
@@ -257,7 +298,6 @@ class HingeDaemon {
             log("Initial angle: \(angle)")
         }
 
-        // Poll timer on main run loop
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now(), repeating: pollInterval)
         timer.setEventHandler { [weak self] in
@@ -268,30 +308,23 @@ class HingeDaemon {
     }
 
     private func poll() {
-        // Mute check (infrequent — every ~1s worth of polls)
         if Int.random(in: 0..<30) == 0 && isMuted() { return }
 
         guard let angle = sensor.readAngle() else { return }
         let now = Date()
 
-        // Update observable angle (throttled to ~2Hz for menu bar)
+        // Update observable angle on every change
         if currentAngle != angle {
             currentAngle = angle
-            if Int.random(in: 0..<15) == 0 {
-                onAngleUpdate?(angle)
-            }
+            onAngleUpdate?(angle)
         }
 
-        // Record history
         angleHistory.append((time: now, angle: angle))
-        // Trim old entries
         angleHistory.removeAll { now.timeIntervalSince($0.time) > historyWindow * 2 }
 
-        // Calculate velocity from history
         let velocity = calculateVelocity(now: now)
         let absVelocity = abs(velocity)
 
-        // Track stability — if angle stays within deadZone for enough frames, update rest position
         if abs(angle - restAngle) <= deadZone / 2 {
             stableCount += 1
             if stableCount >= stableFrames && restAngle != angle {
@@ -301,11 +334,9 @@ class HingeDaemon {
             stableCount = 0
         }
 
-        // Dead zone: only consider movement if we've moved enough from rest position
         let distFromRest = abs(angle - restAngle)
 
         if absVelocity > velocityThreshold && distFromRest >= deadZone && !isMoving {
-            // Real movement started (not jitter)
             isMoving = true
             movementStartAngle = restAngle
             log("Movement started at \(angle) (rest=\(restAngle)) velocity=\(String(format: "%.1f", velocity))/s")
@@ -313,7 +344,6 @@ class HingeDaemon {
 
         if isMoving {
             if absVelocity > velocityThreshold && distFromRest >= deadZone {
-                // Still moving — trigger creak if enough time has passed
                 lastMovementTime = now
                 fadeOutScheduled = false
                 let timeSinceLastCreak = now.timeIntervalSince(lastCreakTime)
@@ -325,7 +355,6 @@ class HingeDaemon {
                     log("Playing \(direction == .closing ? "close" : "open") creak at \(angle) vel=\(String(format: "%.1f", absVelocity))/s")
                 }
             } else if absVelocity < stopThreshold || distFromRest < deadZone {
-                // Movement stopped
                 isMoving = false
                 restAngle = angle
                 stableCount = stableFrames
@@ -333,7 +362,6 @@ class HingeDaemon {
             }
         }
 
-        // Fade out sound immediately when movement stops
         if !isMoving && player.playing && !fadeOutScheduled {
             player.fadeOut(duration: 0.3)
             fadeOutScheduled = true
@@ -344,7 +372,6 @@ class HingeDaemon {
     }
 
     private func calculateVelocity(now: Date) -> Double {
-        // Use history window to smooth velocity
         let cutoff = now.addingTimeInterval(-historyWindow)
         let recent = angleHistory.filter { $0.time >= cutoff }
         guard recent.count >= 2,
@@ -360,14 +387,18 @@ class HingeDaemon {
 
 // MARK: - Menu Bar App
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
     var daemon: HingeDaemon?
     var muteItem: NSMenuItem!
     var angleItem: NSMenuItem!
     var launchAtLoginItem: NSMenuItem!
+    var soundPackMenu: NSMenu!
+    var baseSoundsDir: String = ""
+    var currentPack: String = "hinge"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        currentPack = UserDefaults.standard.string(forKey: "soundPack") ?? "hinge"
         setupMenuBar()
         startDaemon()
     }
@@ -381,10 +412,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
+        menu.delegate = self
 
         angleItem = NSMenuItem(title: "Lid angle: --", action: nil, keyEquivalent: "")
         angleItem.isEnabled = false
         menu.addItem(angleItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // Sound pack submenu
+        let soundItem = NSMenuItem(title: "Sound", action: nil, keyEquivalent: "")
+        soundPackMenu = NSMenu()
+        soundItem.submenu = soundPackMenu
+        menu.addItem(soundItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -411,24 +451,52 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
 
+    private func refreshSoundPackMenu() {
+        soundPackMenu.removeAllItems()
+        let packs = CreakPlayer.availablePacks(in: baseSoundsDir)
+        for pack in packs {
+            let item = NSMenuItem(
+                title: CreakPlayer.displayName(for: pack),
+                action: #selector(selectSoundPack(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = pack
+            item.state = (pack == currentPack) ? .on : .off
+            soundPackMenu.addItem(item)
+        }
+    }
+
+    // MARK: NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // Refresh angle display when menu opens
+        if let angle = daemon?.currentAngle, angle >= 0 {
+            angleItem.title = "Lid angle: \(angle)\u{00B0}"
+        }
+        // Refresh mute state
+        let muted = isMuted()
+        muteItem.title = muted ? "Unmute" : "Mute"
+        statusItem.button?.image = makeIcon(muted: muted)
+        // Refresh sound pack checkmarks
+        refreshSoundPackMenu()
+    }
+
     // MARK: Icon
 
     private func makeIcon(muted: Bool) -> NSImage {
         let img = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
-            // Door rectangle
             let doorRect = NSRect(x: 6, y: 1, width: 10, height: 16)
             let door = NSBezierPath(roundedRect: doorRect, xRadius: 1, yRadius: 1)
             door.lineWidth = 1.5
             NSColor.black.setStroke()
             door.stroke()
 
-            // Hinge pins
             NSColor.black.setFill()
             NSBezierPath(ovalIn: NSRect(x: 3, y: 11, width: 3.5, height: 3.5)).fill()
             NSBezierPath(ovalIn: NSRect(x: 3, y: 3.5, width: 3.5, height: 3.5)).fill()
 
             if muted {
-                // Diagonal slash
                 let slash = NSBezierPath()
                 slash.move(to: NSPoint(x: 2, y: 2))
                 slash.line(to: NSPoint(x: 16, y: 16))
@@ -445,7 +513,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Daemon Lifecycle
 
     private func startDaemon() {
-        let soundsDir = resolveSoundsDir()
+        baseSoundsDir = resolveSoundsDir()
 
         guard let sensor = LidAngleSensor() else {
             log("FATAL: Could not initialize lid angle sensor")
@@ -454,7 +522,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        guard let player = CreakPlayer(soundsDir: soundsDir) else {
+        guard let player = CreakPlayer(soundsDir: baseSoundsDir, pack: currentPack) else {
             log("FATAL: Could not initialize audio player")
             angleItem.title = "Audio error"
             return
@@ -469,17 +537,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if let angle = daemon?.currentAngle, angle >= 0 {
             angleItem.title = "Lid angle: \(angle)\u{00B0}"
         }
+
+        refreshSoundPackMenu()
     }
 
     private func resolveSoundsDir() -> String {
-        // Prefer sounds bundled inside the .app
         if let resourcePath = Bundle.main.resourcePath {
             let bundled = (resourcePath as NSString).appendingPathComponent("sounds")
             if FileManager.default.fileExists(atPath: bundled) {
                 return bundled
             }
         }
-        // Fallback: next to the executable
         let execDir = (Bundle.main.executablePath! as NSString).deletingLastPathComponent
         let candidates = [
             (execDir as NSString).appendingPathComponent("../Resources/sounds"),
@@ -502,6 +570,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // MARK: Actions
+
+    @objc private func selectSoundPack(_ sender: NSMenuItem) {
+        guard let pack = sender.representedObject as? String else { return }
+        guard pack != currentPack else { return }
+
+        if daemon?.player.loadSoundPack(name: pack) == true {
+            currentPack = pack
+            UserDefaults.standard.set(pack, forKey: "soundPack")
+            log("Sound pack changed to: \(CreakPlayer.displayName(for: pack))")
+        }
+    }
 
     @objc private func toggleMute() {
         let mutePath = NSHomeDirectory() + "/.hinge_mute"
@@ -575,8 +654,10 @@ if isAppBundle {
         soundsDir = candidates.first { FileManager.default.fileExists(atPath: $0) } ?? candidates[0]
     }
 
+    let pack = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "hinge"
+
     log("Starting hinge daemon...")
-    log("Sounds directory: \(soundsDir)")
+    log("Sounds directory: \(soundsDir), pack: \(pack)")
 
     signal(SIGTERM) { _ in log("Received SIGTERM, shutting down"); exit(0) }
     signal(SIGINT) { _ in log("Received SIGINT, shutting down"); exit(0) }
@@ -586,7 +667,7 @@ if isAppBundle {
         exit(1)
     }
 
-    guard let player = CreakPlayer(soundsDir: soundsDir) else {
+    guard let player = CreakPlayer(soundsDir: soundsDir, pack: pack) else {
         log("FATAL: Could not initialize audio player")
         exit(1)
     }

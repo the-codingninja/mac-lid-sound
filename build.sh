@@ -26,7 +26,8 @@ echo "Building $APP_NAME.app..."
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
-mkdir -p "$APP_BUNDLE/Contents/Resources/sounds"
+mkdir -p "$APP_BUNDLE/Contents/Resources/sounds/hinge"
+mkdir -p "$APP_BUNDLE/Contents/Resources/sounds/garage"
 
 # Compile the app binary
 swiftc "$SCRIPT_DIR/Sources/main.swift" \
@@ -39,7 +40,8 @@ swiftc "$SCRIPT_DIR/Sources/main.swift" \
 
 # Copy resources
 cp "$SCRIPT_DIR/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
-cp "$SCRIPT_DIR/sounds/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/"
+cp "$SCRIPT_DIR/sounds/hinge/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/hinge/"
+cp "$SCRIPT_DIR/sounds/garage/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/garage/"
 
 # Ad-hoc code sign (required for running on other machines)
 codesign --force --deep --sign - "$APP_BUNDLE"
