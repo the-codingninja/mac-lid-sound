@@ -28,6 +28,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources/sounds/hinge"
 mkdir -p "$APP_BUNDLE/Contents/Resources/sounds/garage"
+mkdir -p "$APP_BUNDLE/Contents/Resources/sounds/naughty"
 
 # Compile the app binary
 swiftc "$SCRIPT_DIR/Sources/main.swift" \
@@ -46,6 +47,7 @@ VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "1.0
 echo "Version: $VERSION"
 cp "$SCRIPT_DIR/sounds/hinge/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/hinge/"
 cp "$SCRIPT_DIR/sounds/garage/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/garage/"
+cp "$SCRIPT_DIR/sounds/naughty/"*.wav "$APP_BUNDLE/Contents/Resources/sounds/naughty/"
 
 # Ad-hoc code sign (required for running on other machines)
 codesign --force --deep --sign - "$APP_BUNDLE"

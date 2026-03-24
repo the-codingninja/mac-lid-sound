@@ -124,6 +124,7 @@ class CreakPlayer {
         switch pack {
         case "hinge": return "Door Hinge"
         case "garage": return "Garage Door"
+        case "naughty": return "Naughty"
         default: return pack.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
@@ -553,6 +554,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var baseSoundsDir: String = ""
     var currentPack: String = "hinge"
     let updateChecker = UpdateChecker()
+    var naughtyUnlocked: Bool = false
+    var angleTapCount: Int = 0
+    var angleTapTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         currentPack = UserDefaults.standard.string(forKey: "soundPack") ?? "hinge"
@@ -586,8 +590,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         versionItem.isEnabled = false
         menu.addItem(versionItem)
 
-        angleItem = NSMenuItem(title: "Lid angle: --", action: nil, keyEquivalent: "")
-        angleItem.isEnabled = false
+        angleItem = NSMenuItem(title: "Lid angle: --", action: #selector(angleTapped), keyEquivalent: "")
+        angleItem.target = self
         menu.addItem(angleItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -633,6 +637,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         soundPackMenu.removeAllItems()
         let packs = CreakPlayer.availablePacks(in: baseSoundsDir)
         for pack in packs {
+            // Hide naughty unless unlocked
+            if pack == "naughty" && !naughtyUnlocked { continue }
             let item = NSMenuItem(
                 title: CreakPlayer.displayName(for: pack),
                 action: #selector(selectSoundPack(_:)),
@@ -748,6 +754,32 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: Actions
+
+    @objc private func angleTapped() {
+        angleTapCount += 1
+        angleTapTimer?.invalidate()
+        angleTapTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
+            self?.angleTapCount = 0
+        }
+        if angleTapCount >= 5 {
+            angleTapCount = 0
+            angleTapTimer?.invalidate()
+            naughtyUnlocked.toggle()
+            if naughtyUnlocked {
+                log("Naughty mode unlocked")
+            } else {
+                // Switch back to hinge if currently on naughty
+                if currentPack == "naughty" {
+                    if daemon?.player.loadSoundPack(name: "hinge") == true {
+                        currentPack = "hinge"
+                        UserDefaults.standard.set("hinge", forKey: "soundPack")
+                    }
+                }
+                log("Naughty mode hidden")
+            }
+            refreshSoundPackMenu()
+        }
+    }
 
     @objc private func selectSoundPack(_ sender: NSMenuItem) {
         guard let pack = sender.representedObject as? String else { return }
