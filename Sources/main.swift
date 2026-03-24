@@ -581,6 +581,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
 
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let versionItem = NSMenuItem(title: "Door Hinge v\(version)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
         angleItem = NSMenuItem(title: "Lid angle: --", action: nil, keyEquivalent: "")
         angleItem.isEnabled = false
         menu.addItem(angleItem)
