@@ -590,8 +590,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         versionItem.isEnabled = false
         menu.addItem(versionItem)
 
-        angleItem = NSMenuItem(title: "Lid angle: --", action: #selector(angleTapped), keyEquivalent: "")
-        angleItem.target = self
+        angleItem = NSMenuItem()
+        let angleButton = NSButton(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
+        angleButton.title = "  Lid angle: --"
+        angleButton.isBordered = false
+        angleButton.target = self
+        angleButton.action = #selector(angleTapped)
+        angleButton.alignment = .left
+        angleButton.font = NSFont.menuFont(ofSize: 14)
+        angleButton.contentTintColor = .secondaryLabelColor
+        (angleButton.cell as? NSButtonCell)?.highlightsBy = []
+        angleItem.view = angleButton
         menu.addItem(angleItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -651,12 +660,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    private func setAngleText(_ text: String) {
+        (angleItem.view as? NSButton)?.title = "  \(text)"
+    }
+
     // MARK: NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
         // Refresh angle display when menu opens
         if let angle = daemon?.currentAngle, angle >= 0 {
-            angleItem.title = "Lid angle: \(angle)\u{00B0}"
+            setAngleText("Lid angle: \(angle)\u{00B0}")
         }
         // Refresh mute state
         let muted = isMuted()
@@ -701,25 +714,25 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         guard let sensor = LidAngleSensor() else {
             log("FATAL: Could not initialize lid angle sensor")
-            angleItem.title = "Sensor not found"
+            setAngleText("Sensor not found")
             showSensorNotFoundAlert()
             return
         }
 
         guard let player = CreakPlayer(soundsDir: baseSoundsDir, pack: currentPack) else {
             log("FATAL: Could not initialize audio player")
-            angleItem.title = "Audio error"
+            setAngleText("Audio error")
             return
         }
 
         daemon = HingeDaemon(sensor: sensor, player: player)
         daemon?.onAngleUpdate = { [weak self] angle in
-            self?.angleItem.title = "Lid angle: \(angle)\u{00B0}"
+            self?.setAngleText("Lid angle: \(angle)\u{00B0}")
         }
         daemon?.start()
 
         if let angle = daemon?.currentAngle, angle >= 0 {
-            angleItem.title = "Lid angle: \(angle)\u{00B0}"
+            setAngleText("Lid angle: \(angle)\u{00B0}")
         }
 
         refreshSoundPackMenu()
