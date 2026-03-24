@@ -4,6 +4,7 @@ hinge-daemon
 # Build artifacts
 build/
 *.dmg
+*.tar.gz
 
 # Cache (pre-processed sounds)
 cache/
@@ -16,6 +17,9 @@ scripts/
 
 # macOS
 .DS_Store
+
+# Docs (private unless specified)
+docs/
 
 # Claude
 .claude/

@@ -899,7 +899,7 @@ if isAppBundle {
         let candidates = [
             (execDir as NSString).appendingPathComponent("../sounds"),
             (execDir as NSString).appendingPathComponent("sounds"),
-            NSHomeDirectory() + "/personal/mac-door-hinge-sound/sounds"
+            NSHomeDirectory() + "/Library/Application Support/DoorHinge/sounds"
         ]
         soundsDir = candidates.first { FileManager.default.fileExists(atPath: $0) } ?? candidates[0]
     }
