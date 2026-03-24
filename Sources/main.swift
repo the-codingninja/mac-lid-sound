@@ -387,16 +387,6 @@ class HingeDaemon {
 
 // MARK: - Auto-Update
 
-class RedirectCapture: NSObject, URLSessionTaskDelegate {
-    static let shared = RedirectCapture()
-    var lastRedirectURL: URL?
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        lastRedirectURL = request.url
-        completionHandler(request)
-    }
-}
-
 class UpdateChecker {
     private let repo = "the-codingninja/mac-lid-sound"
     private(set) var latestVersion: String?
@@ -404,27 +394,31 @@ class UpdateChecker {
     var onUpdateAvailable: ((String) -> Void)?
 
     func check() {
-        // Use redirect-based tag detection (no API rate limits)
+        // GET releases/latest — URLSession follows the redirect automatically,
+        // so response.url contains the final URL with the tag
         let urlString = "https://github.com/\(repo)/releases/latest"
         guard let url = URL(string: urlString) else { return }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-
-        let session = URLSession(configuration: .default, delegate: RedirectCapture.shared, delegateQueue: nil)
-        session.dataTask(with: request) { [weak self] _, response, error in
+        URLSession.shared.dataTask(with: url) { [weak self] _, response, error in
             guard let self = self else { return }
 
-            // Extract tag from redirect URL: .../releases/tag/v1.3.0
-            guard let redirectURL = RedirectCapture.shared.lastRedirectURL,
-                  let tag = redirectURL.absoluteString.split(separator: "/").last else {
-                if let error = error { log("Update check failed: \(error.localizedDescription)") }
+            if let error = error {
+                log("Update check failed: \(error.localizedDescription)")
+                return
+            }
+
+            // Final URL after redirect: .../releases/tag/v1.3.2
+            guard let finalURL = response?.url?.absoluteString,
+                  let tag = finalURL.split(separator: "/").last else {
+                log("Update check: could not determine latest tag")
                 return
             }
 
             let tagStr = String(tag)
             let remote = tagStr.hasPrefix("v") ? String(tagStr.dropFirst()) : tagStr
             let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+
+            log("Update check: local=v\(current) remote=v\(remote)")
 
             guard self.isNewer(remote, than: current) else {
                 log("Up to date (v\(current))")
@@ -455,7 +449,10 @@ class UpdateChecker {
     }
 
     func performUpdate(onStatus: @escaping (String) -> Void) {
-        guard let urlString = downloadURL, let url = URL(string: urlString) else { return }
+        guard let urlString = downloadURL, let url = URL(string: urlString) else {
+            log("Update failed: no download URL")
+            return
+        }
 
         onStatus("Downloading v\(latestVersion ?? "")...")
         log("Downloading update from \(urlString)")
@@ -467,10 +464,17 @@ class UpdateChecker {
                 return
             }
 
-            // Copy to stable location before temp file is cleaned up
+            // Copy to stable path before the temp file is cleaned up
             let dmgPath = "/tmp/Door-Hinge-update.dmg"
-            try? FileManager.default.removeItem(atPath: dmgPath)
-            try? FileManager.default.copyItem(atPath: localURL.path, toPath: dmgPath)
+            do {
+                try? FileManager.default.removeItem(atPath: dmgPath)
+                try FileManager.default.copyItem(atPath: localURL.path, toPath: dmgPath)
+                log("Downloaded update to \(dmgPath)")
+            } catch {
+                log("Failed to save DMG: \(error)")
+                DispatchQueue.main.async { onStatus("Download failed") }
+                return
+            }
 
             DispatchQueue.main.async {
                 self.installUpdate(dmgPath: dmgPath, onStatus: onStatus)
@@ -482,30 +486,57 @@ class UpdateChecker {
         onStatus("Installing...")
         let pid = ProcessInfo.processInfo.processIdentifier
         let appPath = Bundle.main.bundlePath
+        let logPath = NSHomeDirectory() + "/.hinge_sound.log"
 
-        // Write updater script that runs after this process exits
-        let script = """
-        #!/bin/bash
-        while kill -0 \(pid) 2>/dev/null; do sleep 0.3; done
-        hdiutil attach "\(dmgPath)" -quiet -nobrowse -mountpoint /tmp/dh-update-mount
-        rm -rf "\(appPath)"
-        cp -R "/tmp/dh-update-mount/Door Hinge.app" "\(appPath)"
-        xattr -cr "\(appPath)"
-        hdiutil detach /tmp/dh-update-mount -quiet
-        rm -f "\(dmgPath)" /tmp/door-hinge-updater.sh
-        open "\(appPath)"
-        """
+        let script = [
+            "#!/bin/bash",
+            "LOG='\(logPath)'",
+            "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) [updater] Waiting for app to exit (pid \(pid))\" >> \"$LOG\"",
+            "while kill -0 \(pid) 2>/dev/null; do sleep 0.3; done",
+            "",
+            "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) [updater] Mounting DMG\" >> \"$LOG\"",
+            "hdiutil attach '\(dmgPath)' -quiet -nobrowse -mountpoint /tmp/dh-update-mount",
+            "if [ ! -d '/tmp/dh-update-mount/Door Hinge.app' ]; then",
+            "  echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) [updater] ERROR: Mount failed or app not found\" >> \"$LOG\"",
+            "  hdiutil detach /tmp/dh-update-mount -quiet 2>/dev/null",
+            "  rm -f '\(dmgPath)'",
+            "  exit 1",
+            "fi",
+            "",
+            "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) [updater] Replacing app at \(appPath)\" >> \"$LOG\"",
+            "rm -rf '\(appPath)'",
+            "cp -R '/tmp/dh-update-mount/Door Hinge.app' '\(appPath)'",
+            "xattr -cr '\(appPath)'",
+            "",
+            "hdiutil detach /tmp/dh-update-mount -quiet",
+            "rm -f '\(dmgPath)' /tmp/door-hinge-updater.sh",
+            "",
+            "echo \"$(date -u +%Y-%m-%dT%H:%M:%SZ) [updater] Launching updated app\" >> \"$LOG\"",
+            "open '\(appPath)'",
+        ].joined(separator: "\n")
 
         let scriptPath = "/tmp/door-hinge-updater.sh"
-        try? script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+        do {
+            try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
+        } catch {
+            log("Failed to write updater script: \(error)")
+            onStatus("Update failed")
+            return
+        }
 
+        // Launch with nohup so it survives our termination
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [scriptPath]
-        try? process.run()
-
-        log("Update script launched, terminating for update...")
-        NSApp.terminate(nil)
+        process.arguments = ["-c", "nohup /bin/bash '\(scriptPath)' &>/dev/null &"]
+        do {
+            try process.run()
+            log("Update script launched, terminating for update...")
+            NSApp.terminate(nil)
+        } catch {
+            log("Failed to launch updater: \(error)")
+            onStatus("Update failed")
+        }
     }
 }
 
