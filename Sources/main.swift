@@ -387,6 +387,16 @@ class HingeDaemon {
 
 // MARK: - Auto-Update
 
+class RedirectCapture: NSObject, URLSessionTaskDelegate {
+    static let shared = RedirectCapture()
+    var lastRedirectURL: URL?
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        lastRedirectURL = request.url
+        completionHandler(request)
+    }
+}
+
 class UpdateChecker {
     private let repo = "the-codingninja/mac-lid-sound"
     private(set) var latestVersion: String?
@@ -394,33 +404,39 @@ class UpdateChecker {
     var onUpdateAvailable: ((String) -> Void)?
 
     func check() {
-        let urlString = "https://api.github.com/repos/\(repo)/releases/latest"
+        // Use redirect-based tag detection (no API rate limits)
+        let urlString = "https://github.com/\(repo)/releases/latest"
         guard let url = URL(string: urlString) else { return }
 
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
-            guard let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let tagName = json["tag_name"] as? String,
-                  let assets = json["assets"] as? [[String: Any]] else {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+
+        let session = URLSession(configuration: .default, delegate: RedirectCapture.shared, delegateQueue: nil)
+        session.dataTask(with: request) { [weak self] _, response, error in
+            guard let self = self else { return }
+
+            // Extract tag from redirect URL: .../releases/tag/v1.3.0
+            guard let redirectURL = RedirectCapture.shared.lastRedirectURL,
+                  let tag = redirectURL.absoluteString.split(separator: "/").last else {
                 if let error = error { log("Update check failed: \(error.localizedDescription)") }
                 return
             }
 
-            let remote = tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+            let tagStr = String(tag)
+            let remote = tagStr.hasPrefix("v") ? String(tagStr.dropFirst()) : tagStr
             let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
 
-            guard self?.isNewer(remote, than: current) == true else {
+            guard self.isNewer(remote, than: current) else {
                 log("Up to date (v\(current))")
                 return
             }
 
-            let dmgURL = assets.first { ($0["name"] as? String)?.hasSuffix(".dmg") == true }
-            let url = dmgURL?["browser_download_url"] as? String
+            let dmgURL = "https://github.com/\(self.repo)/releases/download/\(tagStr)/Door-Hinge.dmg"
 
             DispatchQueue.main.async {
-                self?.latestVersion = remote
-                self?.downloadURL = url
-                self?.onUpdateAvailable?(remote)
+                self.latestVersion = remote
+                self.downloadURL = dmgURL
+                self.onUpdateAvailable?(remote)
                 log("Update available: v\(remote)")
             }
         }.resume()

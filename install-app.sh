@@ -12,21 +12,26 @@ REPO="the-codingninja/mac-lid-sound"
 echo "=== Door Hinge Installer ==="
 echo ""
 
-# Get latest DMG URL from GitHub releases
+# Get latest release tag and download DMG
 echo "Fetching latest release..."
-DMG_URL=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" \
-    | grep browser_download_url \
-    | grep -i dmg \
-    | head -1 \
-    | cut -d'"' -f4)
+TAG=$(curl -sI "https://github.com/$REPO/releases/latest" \
+    | grep -i "^location:" \
+    | sed 's|.*/tag/||' \
+    | tr -d '[:space:]')
 
-if [ -z "$DMG_URL" ]; then
-    echo "Error: Could not find DMG in latest release."
+if [ -z "$TAG" ]; then
+    echo "Error: Could not determine latest release."
     exit 1
 fi
 
-echo "Downloading $DMG_URL..."
+DMG_URL="https://github.com/$REPO/releases/download/$TAG/Door-Hinge.dmg"
+echo "Downloading $TAG..."
 curl -sL "$DMG_URL" -o "$DMG_PATH"
+
+if [ ! -s "$DMG_PATH" ]; then
+    echo "Error: Download failed."
+    exit 1
+fi
 
 # Mount DMG
 hdiutil attach "$DMG_PATH" -quiet -nobrowse
